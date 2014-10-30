@@ -27,6 +27,7 @@ class Worker(Model):
         ('i', 'Idle'),
         ('R', 'Running'),
         ('C', 'Closing'),
+        ('O', 'Offline'),
     )
     status = Str(choices=STATUS, blank=False, max_length=1, default='I', db_index=True)
 
@@ -35,6 +36,9 @@ class Worker(Model):
     tasks_completed = PosInt(default=0)
 
     started = Date(null=True)
+
+    def __unicode__(self):
+        return 'Worker[%s] at %s' % (self.status, self.host)
 
 class Task(Model):
     STATUS = (
@@ -77,4 +81,5 @@ class Task(Model):
     updated = Date(auto_now=True)
 
 
-
+    def __unicode__(self):
+        return "Task[%s]: %s" % (self.status, self.func_name)

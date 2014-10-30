@@ -23,9 +23,8 @@ class NoTasksPending(Exception):
     pass
 
 class WorkerThread(Thread):
-    def __init__(self):
-        self.worker = Worker(host=HOST)
-        self.worker.save()
+    def __init__(self, worker):
+        self.worker = worker
 
         Thread.__init__(self, name='Worker-%d' % self.worker.id)
 
@@ -69,6 +68,9 @@ class WorkerThread(Thread):
             self.worker.status = 'R'
             self.worker.save()
 
+            task.started_at = timezone.now()
+            task.save()
+
             try:
                 task.result_str = json.dumps(self._run_task(task))
                 task.status = 'S'
@@ -89,12 +91,21 @@ def main():
     log('Starting server')
 
     # start worker threads
-    workers = [WorkerThread() for x in range(WORKERS)]
+    workers = [Worker(host=HOST) for x in range(WORKERS)]
 
     for worker in workers:
-        worker.setDaemon(True)
-        worker.start()
+        worker.save()
 
-    for worker in workers:
-        worker.join()
+    try:
+        worker_threads = map(WorkerThread, workers)
+
+        for worker in worker_threads:
+            worker.setDaemon(True)
+            worker.start()
+
+        for worker in worker_threads:
+            worker.join()
+
+    finally:
+        worker.status = 'O'
 
