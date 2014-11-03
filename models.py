@@ -2,6 +2,11 @@ from django.db import models
 
 Model = models.Model
 
+def reload_as_new(self):
+    return type(self).objects.get(id=self.id)
+
+Model.reload_as_new = reload_as_new
+
 def apply_kw_override_defaults(field, **defaults):
     def _closure(*args, **kw):
         d = dict(defaults)
@@ -21,6 +26,7 @@ Date = apply_kw_override_defaults(models.DateTimeField, null=False, blank=True)
 ForeignKey = apply_kw_override_defaults(models.ForeignKey, null=False)
 M2M = apply_kw_override_defaults(models.ManyToManyField, blank=True)
 
+
 class Worker(Model):
     STATUS = (
         ('I', 'Initializing'),
@@ -32,7 +38,7 @@ class Worker(Model):
     status = Str(choices=STATUS, blank=False, max_length=1, default='I', db_index=True)
 
     host = Str(blank=False)
-    current_task = ForeignKey('Task', null=True, related_name='+')
+    current_task = ForeignKey('Task', null=True, related_name='+', on_delete=models.SET_NULL)
     tasks_completed = PosInt(default=0)
 
     started = Date(null=True)
@@ -94,3 +100,7 @@ class Task(Model):
 
     def __unicode__(self):
         return "Task[%s]: %s" % (self.status, self.func_name)
+
+    def report_error(self, text):
+        self.status = 'E'
+        self.error_str = unicode(text)

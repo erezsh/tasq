@@ -1,11 +1,11 @@
 import time
 import json
 from django.utils import timezone
-from datetime import timedelta
 from threading import Thread
+from multiprocessing import Process, Value
 import logging
 
-from django.db import transaction
+from django.db import transaction, OperationalError
 
 from .utils import unpack_args, find_function
 from .models import Task, Worker
@@ -13,6 +13,10 @@ from .models import Task, Worker
 HOST = 'localhost'
 WORKERS = 2
 LAG = 1
+TIMEOUT = 20 * 60
+TIMEOUT_LAG = LAG * 10
+
+g_ctrl_c = Value('i', False)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('tasq')
@@ -22,11 +26,16 @@ log = logger.info
 class NoTasksPending(Exception):
     pass
 
-class WorkerThread(Thread):
-    def __init__(self, worker):
-        self.worker = worker
+class WorkerProcess(Process):
+    def __init__(self):
+        self.worker = Worker(host=HOST)
+        self.worker.save()
 
-        Thread.__init__(self, name='Worker-%d' % self.worker.id)
+        Process.__init__(self,
+                target = self.main,
+                args = (g_ctrl_c, ),
+                name='Worker-%d' % self.worker.id
+            )
 
     def _next_task(self):
         with transaction.atomic():
@@ -48,18 +57,16 @@ class WorkerThread(Thread):
         args, kwargs = unpack_args(task.args)
         return func(task, *args, **kwargs)
 
-    def run(self):
-        log('Worker %s starting', self.worker)
-
-        self.worker.started = timezone.now()
-        self.worker.status = 'i'
-        self.worker.save()
-
+    def _mainloop(self):
         while True:
             logger.debug('Waiting for next task')
             try:
                 task = self._next_task()
             except NoTasksPending:
+                time.sleep(LAG)
+                continue
+            except OperationalError as e:
+                logger.exception(e)
                 time.sleep(LAG)
                 continue
 
@@ -86,26 +93,69 @@ class WorkerThread(Thread):
             self.worker.status = 'i'
             self.worker.save()
 
+    def main(self, ctrl_c):
+        try:
+            log('Worker process %s starting', self.worker)
+
+            self.worker.started = timezone.now()
+            self.worker.status = 'i'
+            self.worker.save()
+
+            self._mainloop()
+
+        except KeyboardInterrupt:
+            ctrl_c.value = True
+            raise
+
+class WorkerThread(Thread):
+    @staticmethod
+    def _new_process():
+        process = WorkerProcess()
+        process.start()
+        return process
+
+    def run(self):
+        process = self._new_process()
+
+        try:
+            while True:
+                process.join(TIMEOUT_LAG)
+                if g_ctrl_c.value:
+                    return
+
+                if process.is_alive():
+                    worker = process.worker.reload_as_new()
+                    if worker.current_task:
+                        task_duration = (timezone.now() - worker.current_task.started_at).total_seconds()
+                        if task_duration > TIMEOUT:
+                            process.terminate()
+                            process.join()
+
+                            worker.current_task.report_error('Timeout %s' % TIMEOUT)
+                            worker.current_task.save()
+
+                if not process.is_alive():
+                    process.worker.status = 'O'
+                    process.worker.save()
+
+                    process = self._new_process()
+        finally:
+            process.join()
+            process.worker.status = 'O'
+            process.worker.save()
 
 def main():
     log('Starting server')
 
     # start worker threads
-    workers = [Worker(host=HOST) for x in range(WORKERS)]
+    worker_threads = [WorkerThread() for _ in range(WORKERS)]
 
-    for worker in workers:
-        worker.save()
+    for worker in worker_threads:
+        # worker.setDaemon(True)
+        worker.start()
 
-    try:
-        worker_threads = map(WorkerThread, workers)
+    for worker in worker_threads:
+        worker.join()
 
-        for worker in worker_threads:
-            worker.setDaemon(True)
-            worker.start()
-
-        for worker in worker_threads:
-            worker.join()
-
-    finally:
-        worker.status = 'O'
+    log('Shutting down')
 
