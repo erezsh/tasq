@@ -40,6 +40,13 @@ class Worker(Model):
     def __unicode__(self):
         return 'Worker[%s] at %s' % (self.status, self.host)
 
+
+def filter_manager(**kwargs):
+    class FilterManager(models.Manager):
+        def get_queryset(self):
+                return super(FilterManager, self).get_queryset().filter(**kwargs)
+    return FilterManager()
+
 class Task(Model):
     STATUS = (
         ('I', 'Initializing'),
@@ -80,6 +87,10 @@ class Task(Model):
     created = Date(auto_now_add=True)
     updated = Date(auto_now=True)
 
+
+    objects = models.Manager()
+    pending = filter_manager(status='P')
+    running = filter_manager(status='R')
 
     def __unicode__(self):
         return "Task[%s]: %s" % (self.status, self.func_name)

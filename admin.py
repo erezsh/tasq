@@ -5,6 +5,8 @@ from models import Worker, Task
 def generate_attr_link(attr, link, title=None):
     def attr_func(self, obj):
         attr_obj = getattr(obj, attr)
+        if not attr_obj:
+            return ''
         return '<a href="%s">%s</a>' % (link % (attr_obj.id,), attr_obj)
     attr_func.short_description = title or attr.capitalize()
     attr_func.allow_tags = True
