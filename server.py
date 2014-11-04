@@ -5,7 +5,7 @@ from threading import Thread
 from multiprocessing import Process, Value
 import logging
 
-from django.db import transaction, OperationalError
+from django.db import transaction, OperationalError, InterfaceError
 
 from .utils import unpack_args, find_function
 from .models import Task, Worker
@@ -142,7 +142,12 @@ class WorkerThread(Thread):
         finally:
             process.join()
             process.worker.status = 'O'
-            process.worker.save()
+            try:
+                process.worker.save()
+            except InterfaceError, e:
+                # Database is already closed
+                # TODO: wait and retry?
+                logger.exception(e)
 
 def main():
     log('Starting server')

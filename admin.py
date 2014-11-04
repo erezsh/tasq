@@ -16,6 +16,8 @@ def generate_attr_link(attr, link, title=None):
 
 class TaskAdmin(admin.ModelAdmin):
     list_display = ('func_name', 'start_at', 'queue', 'priority', 'started_at', 'ended_at', 'worker_link', 'status')
+    list_filter = ('status', 'func_name', 'queue')
+
 
     worker_link = generate_attr_link('worker', '/admin/tasq/worker/?id=%s')
 
