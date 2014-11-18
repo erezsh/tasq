@@ -79,10 +79,13 @@ class WorkerProcess(Process):
             task.save()
 
             try:
-                task.result_str = json.dumps(self._run_task(task))
+                json_result = json.dumps(self._run_task(task))
+                task = task.reload_as_new()
+                task.result_str = json_result
                 task.status = 'S'
                 log('Finished task successfully: %s', task)
             except Exception, e:
+                task = task.reload_as_new()
                 task.error_str = unicode(e)
                 task.status = 'E'
                 log('Error in task: %s', task)
@@ -139,6 +142,12 @@ class WorkerThread(Thread):
                     process.worker.save()
 
                     process = self._new_process()
+        except Exception, e:
+            logger.exception(e)
+            if process.worker.current_task:
+                process.worker.current_task.report_error('Worker crashed: %s' % e)
+                process.worker.current_task.save()
+
         finally:
             process.join()
             process.worker.status = 'O'
