@@ -6,12 +6,13 @@ from multiprocessing import Process, Value
 import logging
 
 from django.db import transaction, OperationalError, InterfaceError
+from django.db import connection
 
 from .utils import unpack_args, find_function
 from .models import Task, Worker
 
 HOST = 'localhost'
-WORKERS = 2
+WORKERS = 4
 LAG = 1
 TIMEOUT = 20 * 60
 TIMEOUT_LAG = LAG * 10
@@ -20,7 +21,7 @@ g_ctrl_c = Value('i', False)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('tasq')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 log = logger.info
 
 class NoTasksPending(Exception):
@@ -78,17 +79,22 @@ class WorkerProcess(Process):
             task.started_at = timezone.now()
             task.save()
 
+            connection.close()
             try:
                 json_result = json.dumps(self._run_task(task))
+                connection.close()
                 task = task.reload_as_new()
                 task.result_str = json_result
                 task.status = 'S'
                 log('Finished task successfully: %s', task)
             except Exception, e:
+                connection.close()
                 task = task.reload_as_new()
                 task.error_str = unicode(e)
                 task.status = 'E'
+                logger.exception(e)
                 log('Error in task: %s', task)
+
 
             task.ended_at = timezone.now()
             task.save()
@@ -97,6 +103,7 @@ class WorkerProcess(Process):
             self.worker.save()
 
     def main(self, ctrl_c):
+        connection.close()
         try:
             log('Worker process %s starting', self.worker)
 
@@ -113,8 +120,10 @@ class WorkerProcess(Process):
 class WorkerThread(Thread):
     @staticmethod
     def _new_process():
+        # connection.close()
         process = WorkerProcess()
         process.start()
+        connection.close()
         return process
 
     def run(self):
@@ -157,6 +166,7 @@ class WorkerThread(Thread):
                 # Database is already closed
                 # TODO: wait and retry?
                 logger.exception(e)
+
 
 def main():
     log('Starting server')
